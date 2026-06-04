@@ -128,3 +128,74 @@ html, body {
 textarea, input {
   outline: none;
 }
+
+/* Print Media Stylesheet */
+@media print {
+  /* Hide non-printable elements */
+  aside,
+  header,
+  .no-print,
+  button,
+  .welcome-orb,
+  /* Hide the input editor section to print only the results audit */
+  section:first-of-type {
+    display: none !important;
+  }
+
+  body, html {
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  /* Expand results grid to occupy full width */
+  .grid {
+    display: block !important;
+  }
+
+  section:last-of-type {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .glass-panel, .rounded-2xl, .p-5, .p-3\.5 {
+    background: #f8fafc !important;
+    color: #0f172a !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: none !important;
+    page-break-inside: avoid;
+  }
+
+  h2, h3, h4, h5, span, div, p {
+    color: #0f172a !important;
+    text-shadow: none !important;
+  }
+
+  /* Force background colors to show up in PDF export */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Re-color highlights for white paper readability */
+  .bg-rose-500\/12 {
+    background-color: rgba(239, 68, 68, 0.15) !important;
+    border-color: rgba(239, 68, 68, 0.4) !important;
+    color: #b91c1c !important;
+  }
+
+  .bg-emerald-500\/12 {
+    background-color: rgba(16, 185, 129, 0.15) !important;
+    border-color: rgba(16, 185, 129, 0.4) !important;
+    color: #047857 !important;
+  }
+
+  /* Hide custom absolute canvas or floating visualizers if any */
+  canvas {
+    max-width: 100% !important;
+  }
+}

@@ -37,6 +37,122 @@ export default function Workspace({ isBackendConnected }) {
   const [activeWhatIfWord, setActiveWhatIfWord] = useState(null); // { tok, idx }
   const [whatIfReplacement, setWhatIfReplacement] = useState('');
 
+  // Refs for Virality Simulator
+  const canvasRef = useRef(null);
+  const simAnimationRef = useRef(null);
+
+  // HTML5 Canvas Virality Simulator Loop
+  useEffect(() => {
+    if (!result || !canvasRef.current) return;
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    
+    // Set sizing relative to responsive layout
+    const resizeCanvas = () => {
+      canvas.width = canvas.parentElement.clientWidth || 400;
+      canvas.height = 180;
+    };
+    resizeCanvas();
+    
+    const nodeCount = 55;
+    const nodes = [];
+    const isFake = result.prediction === 'Fake';
+    
+    // Initialize nodes with random velocities
+    for (let i = 0; i < nodeCount; i++) {
+      nodes.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        vx: (Math.random() - 0.5) * 0.9,
+        vy: (Math.random() - 0.5) * 0.9,
+        radius: 4.5,
+        state: i === 0 ? 'infected' : 'susceptible', // Patient zero
+        infectedTime: i === 0 ? 0 : null
+      });
+    }
+    
+    let frames = 0;
+    
+    const runSimulation = () => {
+      if (!ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      frames++;
+      
+      // Draw links
+      ctx.lineWidth = 0.5;
+      for (let i = 0; i < nodeCount; i++) {
+        for (let j = i + 1; j < nodeCount; j++) {
+          const dx = nodes[i].x - nodes[j].x;
+          const dy = nodes[i].y - nodes[j].y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          
+          if (dist < 55) {
+            // Infect neighboring nodes
+            if (nodes[i].state === 'infected' && nodes[j].state === 'susceptible') {
+              const spreadChance = isFake ? 0.045 : 0.008;
+              if (Math.random() < spreadChance) {
+                nodes[j].state = 'infected';
+                nodes[j].infectedTime = frames;
+              }
+            } else if (nodes[j].state === 'infected' && nodes[i].state === 'susceptible') {
+              const spreadChance = isFake ? 0.045 : 0.008;
+              if (Math.random() < spreadChance) {
+                nodes[i].state = 'infected';
+                nodes[i].infectedTime = frames;
+              }
+            }
+            
+            // Draw link line
+            ctx.beginPath();
+            ctx.moveTo(nodes[i].x, nodes[i].y);
+            ctx.lineTo(nodes[j].x, nodes[j].y);
+            if (nodes[i].state === 'infected' || nodes[j].state === 'infected') {
+              ctx.strokeStyle = isFake ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)';
+            } else {
+              ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+            }
+            ctx.stroke();
+          }
+        }
+      }
+      
+      // Draw nodes
+      nodes.forEach(node => {
+        node.x += node.vx;
+        node.y += node.vy;
+        
+        // Bounce bounds
+        if (node.x < 4 || node.x > canvas.width - 4) node.vx = -node.vx;
+        if (node.y < 4 || node.y > canvas.height - 4) node.vy = -node.vy;
+        
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, node.radius, 0, Math.PI*2);
+        
+        if (node.state === 'infected') {
+          ctx.fillStyle = isFake ? '#f43f5e' : '#10b981';
+          ctx.shadowBlur = 6;
+          ctx.shadowColor = isFake ? '#f43f5e' : '#10b981';
+        } else {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+          ctx.shadowBlur = 0;
+        }
+        ctx.fill();
+      });
+      
+      ctx.shadowBlur = 0;
+      simAnimationRef.current = requestAnimationFrame(runSimulation);
+    };
+    
+    runSimulation();
+    
+    return () => {
+      if (simAnimationRef.current) {
+        cancelAnimationFrame(simAnimationRef.current);
+      }
+    };
+  }, [result]);
+
   const loadingSteps = [
     'Initializing advanced NLTK pipeline...',
     'Performing Porter Stemming & stop-word cleanup...',
@@ -305,12 +421,110 @@ export default function Workspace({ isBackendConnected }) {
       word_count: text.split(/\s+/).length
     };
 
+    // AI Text Detection (JS Implementation matching server.py)
+    const detectAiGeneration = (txt) => {
+      const sentences = txt.split(/[.!?]+/).map(s => s.trim()).filter(Boolean);
+      const words = txt.toLowerCase().match(/\b\w+\b/g) || [];
+      if (words.length === 0) return 0.0;
+
+      const uniqueWords = new Set(words);
+      const diversity = uniqueWords.size / words.length;
+
+      let stdDev = 5.0;
+      const sentenceLengths = sentences.map(s => (s.match(/\b\w+\b/g) || []).length);
+      if (sentenceLengths.length > 2) {
+        const meanLen = sentenceLengths.reduce((a, b) => a + b, 0) / sentenceLengths.length;
+        const variance = sentenceLengths.reduce((acc, val) => acc + Math.pow(val - meanLen, 2), 0) / sentenceLengths.length;
+        stdDev = Math.sqrt(variance);
+      }
+
+      const llmBuzzwords = ["delve", "testament", "tapestry", "foster", "consequently", "moreover", "vibrant", "solace", "demystify", "imperative", "notably", "beacon", "furthermore", "essential", "crucial", "enrich"];
+      const buzzwordCount = words.filter(w => llmBuzzwords.includes(w)).length;
+      const buzzwordRatio = buzzwordCount / words.length;
+
+      let score = 50.0;
+
+      if (diversity < 0.45) {
+        score += (0.45 - diversity) * 100;
+      } else {
+        score -= (diversity - 0.45) * 50;
+      }
+
+      if (stdDev < 3.5) {
+        score += (3.5 - stdDev) * 15;
+      } else {
+        score -= (stdDev - 3.5) * 3;
+      }
+
+      if (buzzwordRatio > 0.015) {
+        score += (buzzwordRatio - 0.015) * 1000;
+      }
+
+      score = Math.max(2.0, Math.min(98.0, score));
+      return parseFloat(score.toFixed(1));
+    };
+
+    // Fact-Check Matching (JS Implementation matching server.py)
+    const queryFactChecks = (txt) => {
+      const textLower = txt.toLowerCase();
+      const matches = [];
+
+      const mockFactCheckDb = [
+        {
+          claim: "NASA secret documents leaked showing moon landings were filmed in Hollywood.",
+          verdict: "False / Debunked",
+          source: "Snopes",
+          url: "https://www.snopes.com/fact-check/apollo-11-moon-landing/",
+          details: "NASA has provided comprehensive photographic, rock sample, and telemetry evidence confirming the landings. The claims of studio production directed by Stanley Kubrick are a long-standing conspiracy theory with no factual basis."
+        },
+        {
+          claim: "Federal Reserve raises interest rates by a quarter point in Wednesday meeting.",
+          verdict: "Verified True",
+          source: "Reuters Fact Check",
+          url: "https://www.reuters.com/markets/us/fed-raise-interest-rates-quarter-point-meeting/",
+          details: "Federal Reserve minutes and public briefings from Jerome Powell confirm the benchmark rate increase matched economic expectations."
+        },
+        {
+          claim: "Donald Trump wins presidential election or Biden policy updates.",
+          verdict: "Context Dependent",
+          source: "FactCheck.org",
+          url: "https://www.factcheck.org/",
+          details: "Claims about election results require official state certifications. Be cautious of early social media posts declaring victory before certified tallies."
+        }
+      ];
+
+      for (const item of mockFactCheckDb) {
+        const keywords = item.claim.toLowerCase().split(/\s+/).filter(w => w.length > 4);
+        const matchCount = keywords.filter(kw => textLower.includes(kw)).length;
+        if (matchCount >= 3) {
+          matches.push(item);
+        }
+      }
+
+      if (matches.length === 0) {
+        matches.push({
+          claim: "No direct fact-check matches found for this article's specific wording.",
+          verdict: "Unverified / Neutral",
+          source: "SentinelAI Fact-Check Registry",
+          url: "https://factchecktools.googleapis.com/",
+          details: "We recommend searching independent sources like FactCheck.org or Snopes.com directly for specific political or historical claims."
+        });
+      }
+
+      return matches;
+    };
+
+    const aiProbability = detectAiGeneration(text);
+    const factChecks = queryFactChecks(text);
+
     return {
       prediction,
       confidence,
       features,
       tokens,
-      credibility: mockCredibility
+      credibility: mockCredibility,
+      ai_probability: aiProbability,
+      fact_checks: factChecks
     };
   };
 
@@ -533,7 +747,7 @@ export default function Workspace({ isBackendConnected }) {
               </div>
 
               {/* Main Classification & Circular Gauge Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 
                 {/* 3a. Pulser Shield Card */}
                 <div className="rounded-2xl bg-slate-950/40 border border-white/6 p-5 flex flex-col items-center justify-center text-center relative overflow-hidden group">
@@ -559,10 +773,10 @@ export default function Workspace({ isBackendConnected }) {
                   </div>
 
                   <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Classification Verdict</span>
-                  <h4 className={`font-display font-black text-2xl mt-1 ${result.prediction === 'Fake' ? 'text-rose-500' : 'text-emerald-500'}`}>
+                  <h4 className={`font-display font-black text-xl mt-1 ${result.prediction === 'Fake' ? 'text-rose-500' : 'text-emerald-500'}`}>
                     {result.prediction.toUpperCase()} NEWS
                   </h4>
-                  <p className="text-[10px] text-slate-400 font-medium mt-1">
+                  <p className="text-[9px] text-slate-400 font-medium mt-1">
                     {result.prediction === 'Fake' ? 'Significant falsification flags detected' : 'Standard factual reporting integrity verified'}
                   </p>
                 </div>
@@ -604,7 +818,49 @@ export default function Workspace({ isBackendConnected }) {
                   </div>
 
                   <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Model Confidence</span>
-                  <span className="text-[10px] text-slate-400 mt-1 font-semibold">Margin validation probability</span>
+                  <span className="text-[9px] text-slate-400 mt-1 font-semibold">Margin validation probability</span>
+                </div>
+
+                {/* 3b(2). AI-Generated Text Probability */}
+                <div className="rounded-2xl bg-slate-950/40 border border-white/6 p-5 flex flex-col items-center justify-center text-center relative overflow-hidden">
+                  <div className="absolute inset-0 ai-grid-background opacity-[0.05]" />
+                  
+                  {/* Gauge */}
+                  <div className="relative w-20 h-20 mb-3 flex items-center justify-center">
+                    <svg className="w-full h-full transform -rotate-90">
+                      <circle
+                        cx="40"
+                        cy="40"
+                        r="34"
+                        className="stroke-white/5"
+                        strokeWidth="5.5"
+                        fill="transparent"
+                      />
+                      <circle
+                        cx="40"
+                        cy="40"
+                        r="34"
+                        className={`transition-all duration-1000 ${
+                          (result.ai_probability || 0) > 60 ? 'stroke-purple-500' : 'stroke-blue-400'
+                        }`}
+                        strokeWidth="5.5"
+                        fill="transparent"
+                        strokeDasharray={Math.PI * 2 * 34}
+                        strokeDashoffset={Math.PI * 2 * 34 * (1 - (result.ai_probability || 0) / 100)}
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                    <div className="absolute text-center flex flex-col justify-center">
+                      <span className="text-sm font-black text-white leading-none font-mono">
+                        {(result.ai_probability || 0).toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">AI-Writer Score</span>
+                  <span className="text-[9px] text-slate-400 mt-1 font-semibold">
+                    {(result.ai_probability || 0) > 60 ? 'Likely AI generated' : 'Likely human written'}
+                  </span>
                 </div>
 
               </div>
@@ -832,8 +1088,102 @@ export default function Workspace({ isBackendConnected }) {
  
                </div>
 
-              {/* 3d. LIME Chart */}
-              <div className="rounded-2xl bg-slate-950/30 border border-white/6 p-5 flex flex-col gap-4">
+              {/* 3e. Fact-Check Verification */}
+              {result.fact_checks && result.fact_checks.length > 0 && (
+                <div className="rounded-2xl bg-slate-950/40 border border-white/6 p-5 flex flex-col gap-4 relative text-left">
+                  <div className="absolute inset-0 ai-grid-background opacity-[0.03] pointer-events-none" />
+                  <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-white">Fact-Check Verification Matches</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-900 border border-white/5 text-slate-400 font-bold select-none">
+                        Claim Database Search
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
+                    {result.fact_checks.map((fc, fcIdx) => {
+                      const isFalse = fc.verdict.toLowerCase().includes('false') || fc.verdict.toLowerCase().includes('debunked');
+                      const isTrue = fc.verdict.toLowerCase().includes('true') || fc.verdict.toLowerCase().includes('verified');
+                      
+                      return (
+                        <div key={fcIdx} className="p-3.5 rounded-xl bg-slate-900/40 border border-white/5 flex flex-col gap-2">
+                          <div className="flex justify-between items-start gap-3">
+                            <span className="text-xs font-semibold text-slate-200">
+                              "{fc.claim}"
+                            </span>
+                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded shrink-0 border ${
+                              isFalse 
+                                ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' 
+                                : isTrue 
+                                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+                                  : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                            }`}>
+                              {fc.verdict}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1 border-t border-white/5 pt-2">
+                            <span>Checked by: <strong className="text-slate-300">{fc.source}</strong></span>
+                            {fc.url && fc.url.startsWith('http') && (
+                              <a 
+                                href={fc.url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-blue-400 hover:text-blue-300 flex items-center gap-1 font-bold no-underline"
+                              >
+                                View Report <ExternalLink size={10} />
+                              </a>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-slate-500 leading-normal italic mt-1">
+                            {fc.details}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 3f. Social Media Virality Simulator */}
+              <div className="rounded-2xl bg-slate-950/30 border border-white/6 p-5 flex flex-col gap-4 relative text-left">
+                <div className="absolute inset-0 ai-grid-background opacity-[0.03] pointer-events-none" />
+                <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-white">Social Media Propagation Simulator</span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-900 border border-white/5 text-slate-400 font-bold select-none">
+                      Dynamic SIR Node Network
+                    </span>
+                  </div>
+                  
+                  {/* Stats */}
+                  <div className="flex items-center gap-4 text-[9px] font-bold">
+                    <span className="text-slate-400">
+                      R0 Rate: <strong className={result.prediction === 'Fake' ? 'text-rose-400' : 'text-emerald-400'}>
+                        {result.prediction === 'Fake' 
+                          ? (1.5 + (result.credibility?.clickbait_score / 30) + (result.credibility?.sensationalism_score / 35)).toFixed(2) 
+                          : '1.10'}
+                      </strong>
+                    </span>
+                    <span className="text-slate-400">
+                      Spread Risk: <strong className={result.prediction === 'Fake' ? 'text-rose-400' : 'text-emerald-400'}>
+                        {result.prediction === 'Fake' ? 'High Virality' : 'Low/Controlled'}
+                      </strong>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Canvas visualizer */}
+                <div className="w-full bg-slate-950/60 rounded-xl overflow-hidden border border-white/5 relative flex justify-center items-center h-48">
+                  <canvas ref={canvasRef} className="w-full h-full block" />
+                  <div className="absolute bottom-2.5 left-3 text-[9px] font-mono text-slate-500 bg-slate-950/80 px-2 py-0.5 rounded border border-white/5 select-none pointer-events-none">
+                    Red = Infected / Spreading | Gray = Neutral
+                  </div>
+                </div>
+              </div>
+
+              {/* 3g. LIME Chart */}
+              <div className="rounded-2xl bg-slate-950/30 border border-white/6 p-5 flex flex-col gap-4 text-left">
                 
                 <div className="flex items-center justify-between border-b border-white/5 pb-3">
                   <div className="flex items-center gap-2">
@@ -908,36 +1258,44 @@ export default function Workspace({ isBackendConnected }) {
                 <Info size={10} /> Local Persistence: Stored
               </span>
               
-              <button
-                onClick={() => {
-                  // Save current prediction summary to localStorage history
-                  const prevHistory = JSON.parse(localStorage.getItem('sentinel_history') || '[]');
-                  const newRecord = {
-                    id: Date.now().toString(),
-                    text: inputText.slice(0, 100) + '...',
-                    fullText: inputText,
-                    prediction: result.prediction,
-                    confidence: result.confidence,
-                    timestamp: new Date().toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric'
-                    }) + ' ' + new Date().toLocaleTimeString('en-US', {
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })
-                  };
-                  localStorage.setItem('sentinel_history', JSON.stringify([newRecord, ...prevHistory]));
-                  confetti({
-                    particleCount: 20,
-                    spread: 30,
-                    colors: ['#3b82f6', '#a855f7']
-                  });
-                }}
-                className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/8 hover:border-white/12 text-xs font-bold transition-all cursor-pointer select-none"
-              >
-                💾 Save Analysis
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => window.print()}
+                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/8 hover:border-white/12 text-xs font-bold transition-all cursor-pointer select-none no-print"
+                >
+                  🖨️ Print PDF Report
+                </button>
+                <button
+                  onClick={() => {
+                    // Save current prediction summary to localStorage history
+                    const prevHistory = JSON.parse(localStorage.getItem('sentinel_history') || '[]');
+                    const newRecord = {
+                      id: Date.now().toString(),
+                      text: inputText.slice(0, 100) + '...',
+                      fullText: inputText,
+                      prediction: result.prediction,
+                      confidence: result.confidence,
+                      timestamp: new Date().toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric'
+                      }) + ' ' + new Date().toLocaleTimeString('en-US', {
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })
+                    };
+                    localStorage.setItem('sentinel_history', JSON.stringify([newRecord, ...prevHistory]));
+                    confetti({
+                      particleCount: 20,
+                      spread: 30,
+                      colors: ['#3b82f6', '#a855f7']
+                    });
+                  }}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer select-none no-print"
+                >
+                  💾 Save Analysis
+                </button>
+              </div>
             </div>
           )}
           

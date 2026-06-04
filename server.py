@@ -341,6 +341,131 @@ def analyze_credibility(text, url=None):
         "word_count": word_count
     }
 
+MOCK_FACT_CHECKS = [
+    {
+        "claim": "NASA secret documents leaked showing moon landings were filmed in Hollywood.",
+        "verdict": "False / Debunked",
+        "source": "Snopes",
+        "url": "https://www.snopes.com/fact-check/apollo-11-moon-landing/",
+        "details": "NASA has provided comprehensive photographic, rock sample, and telemetry evidence confirming the landings. The claims of studio production directed by Stanley Kubrick are a long-standing conspiracy theory with no factual basis."
+    },
+    {
+        "claim": "Federal Reserve raises interest rates by a quarter point in Wednesday meeting.",
+        "verdict": "Verified True",
+        "source": "Reuters Fact Check",
+        "url": "https://www.reuters.com/markets/us/fed-raise-interest-rates-quarter-point-meeting/",
+        "details": "Federal Reserve minutes and public briefings from Jerome Powell confirm the benchmark rate increase matched economic expectations."
+    },
+    {
+        "claim": "Donald Trump wins presidential election or Biden policy updates.",
+        "verdict": "Context Dependent",
+        "source": "FactCheck.org",
+        "url": "https://www.factcheck.org/",
+        "details": "Claims about election results require official state certifications. Be cautious of early social media posts declaring victory before certified tallies."
+    }
+]
+
+import json
+
+def detect_ai_generation(text):
+    sentences = re.split(r'[.!?]+', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+    
+    words = re.findall(r'\b\w+\b', text.lower())
+    if not words:
+        return 0.0
+        
+    # 1. Lexical Diversity
+    unique_words = set(words)
+    diversity = len(unique_words) / len(words)
+    
+    # 2. Sentence Length Variance (Burstiness)
+    sentence_lengths = [len(re.findall(r'\b\w+\b', s)) for s in sentences]
+    if len(sentence_lengths) > 2:
+        mean_len = sum(sentence_lengths) / len(sentence_lengths)
+        variance = sum((x - mean_len) ** 2 for x in sentence_lengths) / len(sentence_lengths)
+        std_dev = variance ** 0.5
+    else:
+        std_dev = 5.0 # default neutral
+        
+    # 3. LLM Overused Words
+    llm_buzzwords = ["delve", "testament", "tapestry", "foster", "consequently", "moreover", "vibrant", "solace", "demystify", "imperative", "notably", "beacon", "furthermore", "essential", "crucial", "enrich"]
+    buzzword_count = sum(1 for w in words if w in llm_buzzwords)
+    buzzword_ratio = buzzword_count / len(words) if words else 0
+    
+    # Compute score
+    score = 50.0 # start at 50%
+    
+    # Lexical diversity shifts score (lower diversity -> higher AI probability)
+    if diversity < 0.45:
+        score += (0.45 - diversity) * 100
+    else:
+        score -= (diversity - 0.45) * 50
+        
+    # Std dev shifts score (lower standard deviation / uniform sentences -> higher AI probability)
+    if std_dev < 3.5:
+        score += (3.5 - std_dev) * 15
+    else:
+        score -= (std_dev - 3.5) * 3
+        
+    # Buzzword ratio shifts score
+    if buzzword_ratio > 0.015:
+        score += (buzzword_ratio - 0.015) * 1000
+        
+    score = max(2.0, min(98.0, score))
+    return round(score, 1)
+
+def query_fact_checks(text):
+    text_lower = text.lower()
+    matches = []
+    
+    api_key = os.environ.get("GOOGLE_FACTCHECK_API_KEY")
+    if api_key:
+        try:
+            first_line = text.split('\n')[0].strip()
+            query = re.sub(r'[^a-zA-Z0-9 ]', '', first_line)[:150]
+            
+            url = f"https://factchecktools.googleapis.com/v1alpha1/claims:search?query={urllib.parse.quote(query)}&key={api_key}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                claims = data.get("claims", [])
+                for c in claims[:3]:
+                    claim_text = c.get("text", "")
+                    review = c.get("claimReview", [{}])[0]
+                    verdict = review.get("textualRating", "Unverified")
+                    source = review.get("publisher", {}).get("name", "Unknown")
+                    review_url = review.get("url", "")
+                    matches.append({
+                        "claim": claim_text,
+                        "verdict": verdict,
+                        "source": source,
+                        "url": review_url,
+                        "details": f"Checked by {source}. Verdict: {verdict}."
+                    })
+            if matches:
+                return matches
+        except Exception as e:
+            print(f"Google Fact Check API query failed: {e}")
+            
+    # Local fallback
+    for item in MOCK_FACT_CHECKS:
+        keywords = [w for w in item["claim"].lower().split() if len(w) > 4]
+        match_count = sum(1 for kw in keywords if kw in text_lower)
+        if match_count >= 3:
+            matches.append(item)
+            
+    if not matches:
+        matches.append({
+            "claim": "No direct fact-check matches found for this article's specific wording.",
+            "verdict": "Unverified / Neutral",
+            "source": "SentinelAI Fact-Check Registry",
+            "url": "https://factchecktools.googleapis.com/",
+            "details": "We recommend searching independent sources like FactCheck.org or Snopes.com directly for specific political or historical claims."
+        })
+        
+    return matches
+
 class AnalyzeRequest(BaseModel):
     text: str
     url: str = None
@@ -442,6 +567,12 @@ def analyze_news(request: AnalyzeRequest):
         # 6. Run credibility analysis
         credibility = analyze_credibility(text, request.url)
 
+        # 7. AI Text Detection
+        ai_probability = detect_ai_generation(text)
+
+        # 8. Query Fact Checks
+        fact_checks = query_fact_checks(text)
+
         return {
             "prediction": comparison["lr"]["prediction"],
             "confidence": comparison["lr"]["confidence"],
@@ -449,7 +580,9 @@ def analyze_news(request: AnalyzeRequest):
             "comparison": comparison,
             "features": features,
             "tokens": weighted_tokens,
-            "credibility": credibility
+            "credibility": credibility,
+            "ai_probability": ai_probability,
+            "fact_checks": fact_checks
         }
         
     except Exception as e:
