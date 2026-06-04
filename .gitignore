@@ -1,0 +1,38 @@
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# Python / Backend
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints
+.venv/
+venv/
+env/
+.env
+
+# Large Datasets (Avoid committing files >100MB to GitHub)
+*.csv
+# If you want to keep the small sample_train.csv, uncomment this:
+# !sample_train.csv
+
+# Compiled/Saved Machine Learning Models
+*.pkl
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# IDEs & System
+.vscode/
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
